@@ -1,0 +1,205 @@
+---
+title: "cellchat"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/SC_CHIP_HIV_Diabetes/")
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(scuttle)
+library(DESeq2)
+library(RColorBrewer)
+library(ggrepel)
+```
+
+# Evaluate differential expression.
+```{r}
+clump = function(agg_data, comparison, cell_type) {
+    metadata = colData(agg_data)[,c("group", "metacell")]
+    metadata$group = factor(metadata$group, levels = c("control", comparison)) # Establish to get the order we want.
+
+    dds = DESeqDataSetFromMatrix(round(assay(agg_data, "counts")), 
+                    colData = metadata, 
+                    design = ~ group)
+    
+    keep = rowSums(counts(dds) >= 10) >= nrow(metadata) * 0.85  # at least 85% of metacells that have at least 10 transcripts    
+    dds = dds[keep,]
+    dds = DESeq(dds)
+    res = results(dds, contrast = c("group", comparison, "control"))
+
+    res_ordered_wald = res[order(res$padj),] %>%
+      as.data.frame() %>%
+      filter(!is.na(padj)) %>%
+      rownames_to_column("gene")
+    write_tsv(res_ordered_wald, paste0("tables/metacells_de/", comparison, "_", cell_type, ".tsv"))
+    return(res_ordered_wald)
+}
+
+
+
+run_comparisons = function(comparison, cases, controls, cell_type, counts) {
+  
+  get_data = function(sample_id, cell_type, group) {
+    file = paste0("tables/metacells_output/", sample_id, "_", cell_type, "_metacells.csv")
+    data = read_csv(file) %>%
+      mutate(sample_metacell = sample_id) %>%
+      mutate(group = group)
+  }
+  
+  control_data_list = lapply(controls, get_data, cell_type, "control")
+  control_metadata = do.call("rbind", control_data_list)
+  
+  case_data_list = lapply(cases, get_data, cell_type, comparison)
+  case_metadata = do.call("rbind", case_data_list)
+ 
+  metadata = rbind(case_metadata, control_metadata) %>%
+    dplyr::rename(cell_barcode = `...1`) %>%
+    filter(metacell >= 0) # negative metacell assignments given to outliers
+  
+  if(sum(metadata %>% filter(group != "Control") %>% pull(metacell) >= 0) < 1) {
+    print("Insufficient high quality metacells.")
+    return()
+  }
+
+  counts_subset = counts@counts[,metadata$cell_barcode] # this syntax changes for seurat v4 and seurat v5 (counts vs counts@counts)
+  rownames(metadata) = metadata$cell_barcode
+
+  sce = SingleCellExperiment(counts_subset, colData = metadata)
+  assayNames(sce) = "counts"
+
+  agg_data = aggregateAcrossCells(sce, ids = colData(sce)[,c("group", "metacell")])
+  comparison = clump(agg_data, comparison = comparison, cell_type = cell_type) 
+
+}
+
+
+```
+
+
+```{r}
+annotated_11994_seu = readRDS("rds_objects/5_annotated_11994_monocytes.rds")
+counts = annotated_11994_seu@assays$RNA
+
+# TET2
+run_comparisons(comparison = "TET2", cases = c("5001"), controls = c("5003", "5013", "5029", "5037", "5038"), cell_type = "circulating_cd14+_monocytes", counts = counts)
+# DNMT3A
+run_comparisons(comparison = "DNMT3A", cases = c("5011"), controls = c("5003", "5013", "5029", "5037", "5038"), cell_type = "circulating_cd14+_monocytes", counts = counts)
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+save_plot = function(plot, file, legend = TRUE, width = 4, height = 4, png = FALSE) {
+  if (png) { ggsave(plot = plot, filename =  paste0(file, ".png"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  ggsave(plot = plot, filename =  paste0(file, ".pdf"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in')
+}
+
+```
+
+# Prep for color labels.
+```{r}
+# list from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7916592/
+tem_genes = c("CCL20", "CDC42", "CTNNB1", "EZR", "ITGB2", "ICAM1", "LSP1", "MADCAM1", "MLCK", "PANX1", "RAC1B", "RHOA", "RHOG", "SRC", "SRF", "VASP", "VCAM1", "VEGF", "VWF", "CX43", "ESAM", "IQGAP2", "JAMA", "JAMB", "JAMC", "JAML", "LCK", "MMP2", "OCLN", "PECAM1", "TIAM1", "TIMP4", "CDH5", "ZO1", "ZO2", "ZO3", "CAV1", "CAV2", "CAVIN1", "PLVAP", "SNAP23", "SNAP25", "VAMP1", "VAMP2", "VAMP3", "VAMP8")
+hla_genes = c("HLA-A", "HLA-B", "HLA-C", "HLA-E")
+
+```
+
+# Plot volcanos.
+```{r}
+format_volcano = list(
+  xlab("decreased in CHIP log2(fold change) increased in CHIP"),
+  ylab("-log10(p-value)"),
+  guides(color = guide_legend("Function")),
+  theme_bw(),
+  theme_classic(),
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(size = 12.5),
+        title = element_text(size = 11),
+        legend.key.size = unit(0, "lines")),
+  scale_color_manual(values = c("slateblue", brewer.pal(12, "Paired")[6], "darkgrey"))
+)
+
+
+# function for adding labels
+gene_labels = function(data, direction, xlim, ylim, few = FALSE) {
+  sorted_data = data %>% 
+    arrange(desc(`-log10_p_val`)) %>%
+    filter(`-log10_p_val` > -log10(0.05)) %>%
+    filter(abs(log2FoldChange) > 0.25) %>%
+    head(10)
+  if (few) {
+    sorted_data = head(sorted_data, 3)
+  }
+  if (direction == "pos") {
+    xlims = c(xlim - 0.5, xlim + 0.5)
+  } else {
+    xlims = c(-xlim - 0.5, -xlim + 0.5)
+  }
+  labels = geom_label_repel(data = sorted_data, mapping = aes(label = gene), size = 3, fill = NA, direction = "y", max.overlaps =  Inf, nudge_x = 0.05, segment.alpha = 0.25, force_pull = 0, xlim = xlims, ylim = c(ylim / 5, ylim), show.legend = FALSE, box.padding = 0, segment.linetype = "solid", label.size = 0.08, segment.curvature = ifelse(direction == "neg", -1e-40, 1e-40))
+  return(list(labels))
+}
+
+# function for making plot
+make_volcano_plots = function(cell_type, comparison, x_limit = 1.5, few = FALSE, rds = FALSE, title = "", standard_y_limit = NA) {
+
+  folder = "tables/metacells_de/"
+  filename = paste0(comparison, "_", cell_type, ".tsv")
+  path_to_file = paste0(folder, filename)
+  
+  data = read_tsv(paste0(path_to_file)) %>%
+    mutate(`-log10_p_val` = -log10(padj))
+  
+  # sometimes the most significant p-value is 0, which results in an infinite value after log transformation
+  # if that is the case, these lines convert the value to the highest possible value
+  if (any(data$`-log10_p_val` == Inf)) {
+    data$`-log10_p_val`[data$`-log10_p_val` == Inf] = 292
+  } 
+  
+  y_limit = max(data$`-log10_p_val`) * 1.1
+  
+  data$label_group = NA
+  data$label_group[data$gene %in% tem_genes] = "Transendothelial migration"
+  data$label_group[data$gene %in% hla_genes] = "HLA"
+  data$label_group = factor(data$label_group, levels = c("Transendothelial migration", "HLA", NA))
+  
+  data_pos = data %>% filter(log2FoldChange > 0)
+  data_neg = data %>% filter(log2FoldChange < 0)
+  buffer = 5
+  
+  highlight_list = c(tem_genes, hla_genes)
+  data_pos = data_pos %>% filter(gene %in% c(highlight_list, head(data_pos, 7) %>% pull(gene)))
+  data_neg = data_neg %>% filter(gene %in% c(highlight_list, head(data_neg, 7) %>% pull(gene)))
+  
+  title = ifelse(title == "", gsub("_", " ", gsub(".tsv", "", path_to_file)), title)
+  
+  # render plot
+  plot = ggplot(data %>% arrange(gene %in% highlight_list), aes(x = log2FoldChange, y = `-log10_p_val`, color = label_group)) +
+      geom_point() +
+      format_volcano +
+      xlim(-x_limit, x_limit) +
+      ylim(0, ifelse(!is.na(standard_y_limit), standard_y_limit, y_limit)) +
+      geom_vline(xintercept = c(-0.25, 0.25), linetype = "longdash", alpha = 0.5) +
+      geom_hline(yintercept = -log10(0.05), linetype = "longdash", alpha = 0.5) +
+      gene_labels(data = data_pos, direction = "pos", xlim = x_limit, ylim = y_limit, few) +
+      gene_labels(data = data_neg, direction = "neg", xlim = x_limit, ylim = y_limit, few) +
+      ggtitle(title)
+  
+  print(plot)
+  
+  output_filename = paste0("figures/volcanos/", gsub(".tsv", "", filename))
+  save_plot(plot, output_filename, height = 4, width = 6.5, png = TRUE)
+}
+
+# EXECUTE -----------------------------------------------------------------------------------------------------
+
+make_volcano_plots("circulating_cd14+_monocytes", "TET2", title = "Circulating CD14+ monocytes TET2 vs control", standard_y_limit = 60, x_limit = 2)
+make_volcano_plots("circulating_cd14+_monocytes", "DNMT3A", title = "Circulating CD14+ monocytes DNMT3A vs control", standard_y_limit = 60, x_limit = 2)
+```
+

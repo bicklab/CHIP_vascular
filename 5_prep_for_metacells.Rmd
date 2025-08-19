@@ -1,0 +1,38 @@
+---
+title: "prep_for_metacells"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Alyssa/SC_CHIP_HIV_Diabetes")
+library(Seurat)
+library(tidyverse)
+```
+
+# Function for converting.
+```{r}
+convert_to_10x = function(obj, samples) { 
+  for (i in 1:length(samples)) {
+    print(paste0("Converting sample ", samples[i]))
+    obj_sub = obj[[samples[i]]]
+    DropletUtils::write10xCounts(path = paste0(getwd(), "/input_data/metacells_files/", samples[i]), x = obj_sub[["RNA"]]@data, type = "sparse", version = "3")
+  }
+}
+```
+
+
+# Prep for metacells.
+```{r}
+# Load data.
+annotated_11994_seu = readRDS("rds_objects/5_annotated_11994_monocytes.rds")
+annotated_11994_seu$sample_cell_type = paste(annotated_11994_seu$Sample_ID, annotated_11994_seu$Cell_Type, sep = "_")
+
+# Split data.
+annotated_11994.list = Seurat::SplitObject(annotated_11994_seu, split.by = "sample_cell_type")
+sample_names = unique(annotated_11994_seu$sample_cell_type)
+sample_names = sample_names[grep("monocytes", sample_names)]
+
+# Convert.
+convert_to_10x(obj = annotated_11994.list, samples = sample_names)
+```
+

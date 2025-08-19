@@ -1,0 +1,284 @@
+---
+title: "add_metadata_and_integrate"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular")
+library(harmony)
+library(Seurat)
+library(readxl)
+library(HGNChelper)
+library(tidyverse)
+```
+
+# Processed individual lanes were merged using the merge function. The gene counts were normalized for each cell by dividing by the total gene counts and multiplying by a factor of 10,000 before applying log-transformation as implemented by the LogNormalize function. Protein expression counts were normalized using the CLR method. Variable genes were identified using the FindVariableFeatures function (nFeatures = 3000), and the data were scaled and centered using the ScaleData function. Principal component analysis (PCA) was performed on the scaled data. The number of principal components (PCs) used for downstream analysis was selected based on elbow plots and heat maps of PC dimensions as implemented in the DimHeatmap function. To reduce the batch effect associated with running multiple 10X lanes, we used the Harmony algorithm on the uncorrected PCs implemented as a Seurat wrapper to integrate across lanes26. We performed clustering on the Harmony-corrected PCs using FindNeighbors and FindClusters functions. Marker genes for each cluster were determined using the Wilcoxon Rank Sum test implemented in FindAllMarkers.
+
+# Load data.
+```{r}
+# Load all data.
+seu_hatim_sample_1 = readRDS("../SC_CHIP_HIV_Diabetes/first_submission/rds_objects/4_doublets_labeled_sample_1.rds")
+seu_hatim_sample_2 = readRDS("../SC_CHIP_HIV_Diabetes/first_submission/rds_objects/4_doublets_labeled_sample_2.rds")
+seu_11994_monocytes = readRDS("rds_objects/4_doublets_labeled_11994_monocytes.rds")
+seu_chive_complete = readRDS("../Single_Cell_CHIP/rds_objects/diet_seurat_trimmed.rds")
+
+seu_hatim_sample_1 = AddMetaData(seu_hatim_sample_1, "HATIM_sample_1", col.name = "Dataset")
+seu_hatim_sample_2 = AddMetaData(seu_hatim_sample_2, "HATIM_sample_2", col.name = "Dataset")
+seu_11994_monocytes = AddMetaData(seu_11994_monocytes, "HATIM_enriched", col.name = "Dataset")
+seu_chive_complete = AddMetaData(seu_chive_complete, "CHIVE", col.name = "Dataset")
+```
+
+# Subset to relevant data.
+```{r}
+# Subset CHIVE to diabetics.
+chive_clinical_data = read_excel("../Single_Cell_CHIP/input_data/clinical data for brett v5.xlsx")
+chive_diabetics = chive_clinical_data %>%
+  filter(hx_DM == "yes") %>%
+  pull(patient_id)
+
+seu_chive_diabetics = subset(seu_chive_complete, subset = CHIVEID %in% chive_diabetics)
+seu_chive_diabetics = subset(seu_chive_diabetics, subset = STIM == "VEH")
+
+# Subset HATIM to HIV negative.
+hatim_metadata = read_excel("input_data/HATIM_metadata_HIVnegative.xlsx")
+seu_hatim_sample_1 = AddMetaData(seu_hatim_sample_1, paste(1, seu_hatim_sample_1$hash.ID, sep = "_"), col.name = "Lane_Hash")
+seu_hatim_sample_2 = AddMetaData(seu_hatim_sample_2, paste(2, seu_hatim_sample_2$hash.ID, sep = "_"), col.name = "Lane_Hash")
+
+seu_hatim_sample_1@meta.data = left_join(seu_hatim_sample_1@meta.data %>% rownames_to_column(), hatim_metadata, by = "Lane_Hash") %>%
+  column_to_rownames()
+seu_hatim_sample_2@meta.data = left_join(seu_hatim_sample_2@meta.data %>% rownames_to_column(), hatim_metadata, by = "Lane_Hash") %>%
+  column_to_rownames()
+
+seu_hatim_sample_1 = subset(seu_hatim_sample_1, subset = HATIMID > 5000)
+seu_hatim_sample_2 = subset(seu_hatim_sample_2, subset = HATIMID > 5000)
+
+# Add metadata to HATIM enriched data.
+hatim_enriched_metadata = read_excel("input_data/enriched_11994_metadata.xlsx")
+seu_11994_monocytes@meta.data = left_join(seu_11994_monocytes@meta.data %>% rownames_to_column(), hatim_enriched_metadata, by = "hash.ID") %>%
+  column_to_rownames()
+
+# Remove SCT assay if applicable.
+DefaultAssay(seu_hatim_sample_1) = "RNA"
+seu_hatim_sample_1[["SCT"]] = NULL
+DefaultAssay(seu_hatim_sample_2) = "RNA"
+seu_hatim_sample_2[["SCT"]] = NULL
+DefaultAssay(seu_11994_monocytes) = "RNA"
+seu_11994_monocytes[["SCT"]] = NULL
+```
+
+# Remove doublets.
+```{r}
+# Remove hashing doublets.
+seu_hatim_sample_1 = subset(seu_hatim_sample_1, subset = HTO_classification.global == "Singlet")
+seu_hatim_sample_2 = subset(seu_hatim_sample_2, subset = HTO_classification.global == "Singlet")
+seu_11994_monocytes = subset(seu_11994_monocytes, subset = HTO_classification.global == "Singlet")
+
+# Remove DoubletFinder doublets.
+seu_hatim_sample_1 = subset(seu_hatim_sample_1, subset = DoubletFinder == "Singlet")
+seu_hatim_sample_2 = subset(seu_hatim_sample_2, subset = DoubletFinder == "Singlet")
+seu_11994_monocytes = subset(seu_11994_monocytes, subset = DoubletFinder == "Singlet")
+
+# Doublets are already removed from seu_chive_diabetics.
+```
+
+
+# Merge.
+```{r}
+seu_pbmcs = merge(seu_hatim_sample_1, c(seu_hatim_sample_2, seu_11994_monocytes, seu_chive_diabetics))
+```
+
+
+# Remove mitochondrial and ribosomal genes.
+```{r}
+filter_genes = function(seu) {
+  ribo = rownames(seu)[grepl("^RPS|^RPL", rownames(seu))]
+  mito = rownames(seu)[grepl("^MT-|MRP", rownames(seu))]
+
+  all_remove = c(ribo, mito)
+  seu = subset(seu, features = setdiff(rownames(seu), all_remove))
+
+  return(seu)
+}
+
+seu_pbmcs = filter_genes(seu_pbmcs)
+```
+
+```{r}
+Idents(seu_pbmcs) = "orig.ident"
+VlnPlot(seu_pbmcs, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+
+
+# Normalize and scale.
+```{r}
+normalize_and_scale = function(seu) {
+  seu = NormalizeData(seu, verbose = FALSE)
+  seu = FindVariableFeatures(seu, nfeatures = 3000)
+  seu = ScaleData(seu, verbose = FALSE) # Need to use regular ScaleData for scType
+  seu = RunPCA(seu, verbose = FALSE)
+  ElbowPlot(seu) # Check how many PCs to use downstream 
+  
+  seu = RunUMAP(seu, dims = 1:10)
+  return(seu)
+}
+
+seu_pbmcs = normalize_and_scale(seu_pbmcs)
+saveRDS(seu_pbmcs, "rds_objects/5_pbmcs_merged.rds")
+```
+
+# Remove uninformative metadata.
+```{r}
+seu_pbmcs = readRDS("rds_objects/5_pbmcs_merged.rds")
+
+seu_pbmcs$orig.ident = NULL
+seu_pbmcs$HTO_classification.global = NULL
+seu_pbmcs$nCount_SCT = NULL
+seu_pbmcs$nFeature_SCT = NULL
+seu_pbmcs$DoubletFinder = NULL
+seu_pbmcs$pANN = NULL
+seu_pbmcs$StudyGroup = NULL
+seu_pbmcs$SCT_snn_res.0.8 = NULL
+seu_pbmcs$seurat_clusters = NULL
+seu_pbmcs$nCount_HTO = NULL
+seu_pbmcs$nFeature_HTO = NULL
+seu_pbmcs$HTO_maxID = NULL
+seu_pbmcs$HTO_secondID = NULL
+seu_pbmcs$HTO_margin = NULL
+seu_pbmcs$TYPE = NULL
+seu_pbmcs$HTOID = NULL
+seu_pbmcs$cell_ID = NULL
+seu_pbmcs$scType_celltype = NULL
+seu_pbmcs$UMAP_1 = NULL
+seu_pbmcs$UMAP_2 = NULL
+seu_pbmcs$cell_type = NULL
+seu_pbmcs$case_control = NULL
+seu_pbmcs$hash.ID = NULL
+seu_pbmcs$Lane_Hash = NULL
+seu_pbmcs$STIM = NULL
+seu_pbmcs$GROUP = NULL
+seu_pbmcs$MUTATION = NULL
+seu_pbmcs$GENOTYPE = NULL
+
+seu_pbmcs$Age = ifelse(!is.na(seu_pbmcs$Age), seu_pbmcs$Age, seu_pbmcs$AGE)
+seu_pbmcs$Sex = ifelse(!is.na(seu_pbmcs$Sex), seu_pbmcs$Sex, seu_pbmcs$SEX)
+seu_pbmcs$AGE = NULL
+seu_pbmcs$SEX = NULL
+
+seu_pbmcs$CHIP = ifelse(!is.na(seu_pbmcs$CHIP), seu_pbmcs$CHIP, seu_pbmcs$MUTATION.GROUP)
+seu_pbmcs$MUTATION.GROUP = NULL
+
+seu_pbmcs$HTO_classification = NULL
+seu_pbmcs$ProjectID = NULL
+
+seu_pbmcs$Lane = ifelse(!is.na(seu_pbmcs$LANE), seu_pbmcs$LANE, seu_pbmcs$Dataset)
+seu_pbmcs$LANE = NULL
+
+seu_pbmcs$Dataset = as.factor(seu_pbmcs$Dataset)
+seu_pbmcs$Lane = as.factor(seu_pbmcs$Lane)
+
+```
+
+# Run harmony.
+```{r}
+seu_pbmcs_harmonized = RunHarmony(seu_pbmcs, group.by.vars = c("Dataset"), plot_convergence = TRUE, theta = 8)
+
+ElbowPlot(seu_pbmcs_harmonized)
+
+seu_pbmcs_harmonized = seu_pbmcs_harmonized %>%
+  RunUMAP(reduction = "harmony", dims = 1:10) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:10) %>% 
+  FindClusters(resolution = 0.5)
+```
+
+
+
+
+```{r}
+DimPlot(seu_pbmcs, label = FALSE, group.by = "Dataset", shuffle = TRUE)
+
+DimPlot(seu_pbmcs_harmonized, reduction = "harmony", label = FALSE, group.by = "Dataset", shuffle = TRUE)
+DimPlot(seu_pbmcs_harmonized, reduction = "umap", label = FALSE, group.by = "Dataset", shuffle = TRUE)
+DimPlot(seu_pbmcs_harmonized, reduction = "umap", label = FALSE, group.by = "Lane", shuffle = TRUE)
+DimPlot(seu_pbmcs_harmonized, reduction = "umap", label = FALSE, group.by = "seurat_clusters", shuffle = TRUE)
+
+```
+
+```{r}
+saveRDS(seu_pbmcs_harmonized, "rds_objects/6_pbmcs_harmonized.rds")
+```
+
+```{r}
+seu_pbmcs_harmonized = readRDS("rds_objects/6_pbmcs_harmonized.rds")
+```
+
+
+
+# Prep for scType.
+```{r}
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+
+# DB file
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Immune system" # e.g. Immune system, Pancreas, Liver, Eye, Kidney, Brain, Lung, Adrenal, Heart, Intestine, Muscle, Placenta, Spleen, Stomach, Thymus 
+
+# prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+```
+
+# Annotate cell types.
+```{r}
+annotate_with_scType = function(seu_object) {
+  # get cell-type by cell matrix
+  es.max = sctype_score(scRNAseqData = seu_object[["RNA"]]@scale.data, scaled = TRUE, 
+                        gs = gs_list$gs_positive, gs2 = gs_list$gs_negative) 
+  
+  
+  # merge by cluster
+  cL_results = do.call("rbind", lapply(unique(seu_object@meta.data$seurat_clusters), function(cl){
+      es.max.cl = sort(rowSums(es.max[ ,rownames(seu_object@meta.data[seu_object@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+      head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(seu_object@meta.data$seurat_clusters==cl)), 10)
+  }))
+  
+  top_5_sctype_scores = cL_results %>% dplyr::group_by(cluster) %>% dplyr::top_n(n = 5, wt = scores)  
+  sctype_scores = cL_results %>% dplyr::group_by(cluster) %>% dplyr::top_n(n = 1, wt = scores)  
+  
+  # set low-confident (low ScType score) clusters to "unknown"
+  sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
+  
+  seu_object@meta.data$customclassif = ""
+  for (j in unique(sctype_scores$cluster)){
+    cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+    seu_object@meta.data$customclassif[seu_object@meta.data$seurat_clusters == j] = as.character(cl_type$type[1])
+  }
+  return(seu_object)
+}
+
+
+seu_pbmcs_annotated = annotate_with_scType(seu_pbmcs_harmonized)
+
+```
+
+```{r}
+DimPlot(seu_pbmcs_annotated, reduction = "umap", label = TRUE, repel = TRUE, group.by = "customclassif") 
+```
+```{r}
+table(seu_pbmcs_annotated$customclassif, seu_pbmcs_annotated$Dataset)
+```
+```{r}
+seu_pbmcs_annotated$cell_type = seu_pbmcs_annotated$customclassif
+seu_pbmcs_annotated$customclassif = NULL
+seu_pbmcs_annotated$Patient_ID = ifelse(!is.na(seu_pbmcs$HATIMID), seu_pbmcs$HATIMID, seu_pbmcs$CHIVEID)
+
+saveRDS(seu_pbmcs_annotated, "rds_objects/6_pbmcs_harmonized.rds")
+```
+
+
+
+
+
+

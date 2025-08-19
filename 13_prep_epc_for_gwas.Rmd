@@ -1,0 +1,66 @@
+---
+title: "prep_epc_for_gwas"
+output: html_document
+---
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
+library(tidyverse)
+library(xml2)
+
+```
+
+# Review data dictionary.
+```{r}
+get_data_dictionary = function(path_to_xml) {
+  data_dictionary = read_xml(path_to_xml)
+  nodes = xml_find_all(data_dictionary, "//description")
+  df = data.frame(
+    name = xml_text(xml_find_all(nodes, "//name")),
+    description = xml_text(xml_find_all(nodes, "//description"))[-1]
+  )
+}
+
+epc_data_dictionary = get_data_dictionary("input_data/TOPMed_FMD/FHS/phs000007.v33.pht000670.v8.l_epc_2007_m_0041s.data_dict.xml")
+```
+
+```{r}
+epc = read_tsv("input_data/TOPMed_FMD/FHS/phs000007.v33.pht000670.v8.p14.c1.l_epc_2007_m_0041s.HMB-IRB-MDS.txt", skip = 10)
+
+mapping_table = read_tsv("input_data/TOPMed_FMD/freeze8_sample_annot_2019-04-19.txt") %>%
+  filter(study == "FHS") %>%
+  mutate(shareid = as.integer(subject_id))
+```
+
+```{r}
+epc_for_gwas = left_join(epc %>% select(shareid, CD34, KDR133, CD31, pos_neg, pos_pos, neg_pos, neg_neg, CD31pos, CD31neg, CD31dim, CD31lym), mapping_table %>% select(sample.id, shareid)) %>%
+  filter(!is.na(sample.id))
+
+epc_for_gwas_cd34 = epc_for_gwas %>% select(sample.id, CD34) %>% na.omit()
+epc_for_gwas_kdr133 = epc_for_gwas %>% select(sample.id, KDR133) %>% na.omit()
+epc_for_gwas_cd31 = epc_for_gwas %>% select(sample.id, CD31) %>% na.omit()
+epc_for_gwas_posneg = epc_for_gwas %>% select(sample.id, pos_neg) %>% na.omit()
+epc_for_gwas_pospos = epc_for_gwas %>% select(sample.id, pos_pos) %>% na.omit()
+epc_for_gwas_negpos = epc_for_gwas %>% select(sample.id, neg_pos) %>% na.omit()
+epc_for_gwas_negneg = epc_for_gwas %>% select(sample.id, neg_neg) %>% na.omit()
+epc_for_gwas_cd31pos = epc_for_gwas %>% select(sample.id, CD31pos) %>% na.omit()
+epc_for_gwas_cd31neg = epc_for_gwas %>% select(sample.id, CD31neg) %>% na.omit()
+epc_for_gwas_cd31dim = epc_for_gwas %>% select(sample.id, CD31dim) %>% na.omit()
+epc_for_gwas_cd31lym = epc_for_gwas %>% select(sample.id, CD31lym) %>% na.omit()
+
+
+write_tsv(epc_for_gwas_cd34, "tables/epc/epc_for_gwas_cd34.tsv")
+write_tsv(epc_for_gwas_kdr133, "tables/epc/epc_for_gwas_kdr133.tsv")
+write_tsv(epc_for_gwas_cd31, "tables/epc/epc_for_gwas_cd31.tsv")
+write_tsv(epc_for_gwas_posneg, "tables/epc/epc_for_gwas_posneg.tsv")
+write_tsv(epc_for_gwas_pospos, "tables/epc/epc_for_gwas_pospos.tsv")
+write_tsv(epc_for_gwas_negpos, "tables/epc/epc_for_gwas_negpos.tsv")
+write_tsv(epc_for_gwas_negneg, "tables/epc/epc_for_gwas_negneg.tsv")
+write_tsv(epc_for_gwas_cd31pos, "tables/epc/epc_for_gwas_cd31pos.tsv")
+write_tsv(epc_for_gwas_cd31neg, "tables/epc/epc_for_gwas_cd31neg.tsv")
+write_tsv(epc_for_gwas_cd31dim, "tables/epc/epc_for_gwas_cd31dim.tsv")
+write_tsv(epc_for_gwas_cd31lym, "tables/epc/epc_for_gwas_cd31lym.tsv")
+
+```
+

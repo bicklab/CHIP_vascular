@@ -1,0 +1,379 @@
+---
+title: "make_plots"
+output: html_document
+---
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
+library(Seurat)
+library(tidyverse)
+library(CellChat)
+
+save_plot = function(plot, file, legend = TRUE, width = 4, height = 4, png = FALSE, svg = FALSE) {
+  if (png) { ggsave(plot = plot, filename =  paste0(file, ".png"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  if (svg) { ggsave(plot = plot, filename =  paste0(file, ".svg"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  ggsave(plot = plot, filename =  paste0(file, ".pdf"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in')
+}
+```
+
+
+```{r}
+seu_pbmcs_annotated = readRDS("rds_objects/6_pbmcs_harmonized.rds")
+seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$Patient_ID == "CH-21-006"] = "DNMT3A"
+seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$Patient_ID == "CH-21-014"] = "TET2"
+seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$CHIP == "control"] = "Control"
+```
+
+
+```{r}
+
+colors = c("#68855CFF", "#9C9C5EFF",  "#C8133BFF", "#9D7660FF", "#855C75FF","#FEB5A2FF", "#D9AF6BFF",  "#EA8783FF", "#A37A93FF", "#9D7670FF", "#D7B5A6FF")
+
+
+seu_pbmcs_annotated$cell_type[seu_pbmcs_annotated$cell_type == "Erythroid-like and erythroid precursor cells"] = "Erythroid"
+seu_pbmcs_annotated$cell_type[seu_pbmcs_annotated$cell_type == "CD8+ NKT-like cells"] = "CD8+ T cells"
+seu_pbmcs_annotated$cell_type[seu_pbmcs_annotated$cell_type == "Naive CD4+ T cells"] = "CD4+ T cells"
+
+#cell_counts = table(seu_pbmcs_annotated@meta.data$cell_type)
+#seu_pbmcs_annotated@meta.data$cell_type_with_counts = paste0(seu_pbmcs_annotated@meta.data$cell_type, " (n = ", cell_counts[seu_pbmcs_annotated@meta.data$cell_type], ")")
+
+(pbmc_dimplot = DimPlot(seu_pbmcs_annotated, group.by = "cell_type", cols = colors) +
+  ggtitle("PBMCs"))
+save_plot(pbmc_dimplot, "figures/umaps/pbmc_dimplot", width = 6.5, png = TRUE)
+```
+
+```{r}
+seu_adipose_annotated = readRDS("rds_objects/5_annotated_adipose.rds")
+```
+
+```{r}
+#adipose_cell_counts = table(seu_adipose_annotated@meta.data$cell_type)
+#seu_adipose_annotated@meta.data$cell_type_with_counts = #paste0(seu_adipose_annotated@meta.data$cell_type, " (n = ", #adipose_cell_counts[seu_adipose_annotated@meta.data$cell_type], ")")
+
+adipose_colors = c("#D9AF6BFF", "#466F9DFF",  "#C8133BFF", "#91B3D7FF", "#68855CFF", "#383871")
+
+
+(adipose_dimplot = DimPlot(seu_adipose_annotated, group.by = "cell_type", cols = adipose_colors) +
+  ggtitle("Adipose tissue"))
+save_plot(adipose_dimplot, "figures/umaps/adipose_dimplot", width = 6.5, png = TRUE)
+
+```
+
+```{r}
+
+(itgb_violin = VlnPlot(seu_pbmcs_annotated %>% subset(subset = cell_type == "Classical Monocytes"), features = "ITGB2", cols = c("grey", "#584482", "#3E7274"), group.by = "CHIP", pt.size = 0))
+save_plot(itgb_violin, "figures/violins/itgb_violin")
+
+(cxcl8_violin = VlnPlot(seu_pbmcs_annotated %>% subset(subset = cell_type == "Classical Monocytes"), features = "CXCL8", cols = c("grey", "#584482", "#3E7274"), group.by = "CHIP", pt.size = 0))
+save_plot(cxcl8_violin, "figures/violins/cxcl8_violin")
+
+(cxcl1_violin = VlnPlot(seu_pbmcs_annotated %>% subset(subset = cell_type == "Classical Monocytes"), features = "CXCL1", cols = c("grey", "#584482", "#3E7274"), group.by = "CHIP", pt.size = 0))
+save_plot(cxcl1_violin, "figures/violins/cxcl1_violin")
+
+(cxcl2_violin = VlnPlot(seu_pbmcs_annotated %>% subset(subset = cell_type == "Classical Monocytes" & CHIP %in% c("Control", "TET2")), features = "CXCL2", cols = c("grey", "#3E7274"), group.by = "CHIP", pt.size = 0))
+save_plot(cxcl2_violin, "figures/violins/cxcl2_violin", png = TRUE)
+
+(cxcl3_violin = VlnPlot(seu_pbmcs_annotated %>% subset(subset = cell_type == "Classical Monocytes" & CHIP %in% c("Control", "TET2")), features = "CXCL3", cols = c("grey", "#3E7274"), group.by = "CHIP", pt.size = 0))
+save_plot(cxcl3_violin, "figures/violins/cxcl3_violin", png = TRUE)
+
+(itgb_violin = VlnPlot(seu_pbmcs_annotated %>% subset(subset = cell_type == "Classical Monocytes" & CHIP %in% c("Control", "TET2")), features = "ITGB2", cols = c("grey", "#3E7274"), group.by = "CHIP", pt.size = 0))
+save_plot(itgb_violin, "figures/violins/itgb_violin", png = TRUE)
+```
+
+
+# Coculture targets upset plot.
+```{r}
+# Geneformer significant and negative shift means inhibition moves towards controls.
+tet2_geneformer_results = read_csv("input_data/geneformer_results/hpb2022_tet2_control_monos_perturb_output_stats.csv")
+dnmt3a_geneformer_results = read_csv("input_data/geneformer_results/hpb2022_d3a_control_monos_perturb_output_stats_12L.csv")
+
+# DE significant upregulated genes have potential of moving towards controls if inhibited. -> CHANGE TO CELLCHAT
+cellchat_pathway_results = read_tsv("tables/cellchat/mono_endo_ranknet_results.tsv")
+tet2_significance = read_tsv("tables/cellchat/tet2_ranknet_results.tsv")
+dnmt3a_significance = read_tsv("tables/cellchat/dnmt3a_ranknet_results.tsv")
+ligands_and_receptors = CellChatDB.human$interaction
+
+
+# Get TET2 CellChat candidates.
+tet2_candidate_pathways = tet2_significance %>%
+  select(-c(contribution, contribution.relative.1)) %>%
+  pivot_wider(names_from = group, values_from = contribution.scaled) %>%
+  filter(pvalues < 0.05, TET2 > Control)
+
+tet2_lrs = left_join(tet2_candidate_pathways, ligands_and_receptors, by = c(name = "pathway_name")) %>%
+  select(ligand, receptor)
+
+tet2_candidate_genes = c(tet2_lrs$ligand, tet2_lrs$receptor) %>% 
+  strsplit("_") %>%
+  unlist() %>%
+  unique()
+
+# Get DNMT3A CellChat candidates.
+dnmt3a_candidate_pathways = dnmt3a_significance %>%
+  select(-c(contribution, contribution.relative.1)) %>%
+  pivot_wider(names_from = group, values_from = contribution.scaled) %>%
+  filter(pvalues < 0.05, DNMT3A > Control)
+
+dnmt3a_lrs = left_join(dnmt3a_candidate_pathways, ligands_and_receptors, by = c(name = "pathway_name")) %>%
+  select(ligand, receptor)
+
+dnmt3a_candidate_genes = c(dnmt3a_lrs$ligand, dnmt3a_lrs$receptor) %>% 
+  strsplit("_") %>%
+  unlist() %>%
+  unique()
+
+# Get Geneformer candidates.
+tet2_geneformer_targets = tet2_geneformer_results %>%
+  filter(Shift_to_goal_end < 0 & Sig == 1) %>%
+  pull(Gene_name)
+
+dnmt3a_geneformer_targets = dnmt3a_geneformer_results %>%
+  filter(Shift_to_goal_end < 0 & Sig == 1) %>%
+  pull(Gene_name)
+
+
+
+```
+
+
+```{r}
+library(UpSetR)
+library(reshape2)
+
+gene_lists = list(TET2_Geneformer = tet2_geneformer_targets, DNMT3A_Geneformer = dnmt3a_geneformer_targets, TET2_CellChat = tet2_candidate_genes, DNMT3A_CellChat = dnmt3a_candidate_genes)
+gene_df = melt(gene_lists)
+colnames(gene_df) = c("Gene", "List")
+(target_plot = upset(fromList(gene_lists), order.by = "freq", scale.intersections = "log10", show.numbers = FALSE))
+
+svg("figures/upset/perturbation_candidates.svg", height = 4, width = 5)
+target_plot
+dev.off()
+
+
+refined_gene_lists = list(TET2_Geneformer = c("CXCL3", "CXCL2", "FTH1", "JUN", "HLA-DRA", "CXCR4", "AQP9", "BCL2A1", "S100A8", "DNAJC21", "ICAM1"), TET2_CellChat = tet2_candidate_genes)
+refined_gene_df = melt(refined_gene_lists)
+colnames(refined_gene_df) = c("Gene", "List")
+(refined_target_plot = upset(fromList(refined_gene_lists), order.by = "freq", show.numbers = FALSE))
+
+svg("figures/upset/refined_candidates.svg", height = 3, width = 5)
+refined_target_plot
+dev.off()
+```
+
+```{r}
+install.packages("ggVennDiagram")
+library(ggVennDiagram)
+tet2_gene_lists = list(TET2_Geneformer = tet2_geneformer_targets, TET2_CellChat = tet2_candidate_genes)
+
+
+# Venn diagram with custom colors
+ggVennDiagram(tet2_gene_lists, category.names = c("Geneformer", "CellChat"), color = "white")
+```
+
+```{r}
+filtered_candidates <- gene_df %>%
+  group_by(Gene) %>%
+  filter(n() >= 3) %>%
+  ungroup()
+```
+
+
+```{r}
+df2 <- data.frame(gene=unique(unlist(gene_lists)))
+
+df1 <- lapply(gene_lists, function(x){ data.frame(gene = x) }) %>% 
+  bind_rows(.id = "path")
+
+df_int <- lapply(df2$gene,function(x){
+  # pull the name of the intersections
+  intersection <- df1 %>% 
+    dplyr::filter(gene==x) %>% 
+    arrange(path) %>% 
+    pull("path") %>% 
+    paste0(collapse = "|")
+  
+  # build the dataframe
+  data.frame(gene = x,int = intersection)
+}) %>% 
+  bind_rows()
+
+head(df_int,n=20)
+
+df_int %>% 
+  group_by(int) %>% 
+  summarise(n=n()) %>% 
+  arrange(desc(n))
+
+
+```
+
+
+
+```{r}
+myeloid_merged_obj = readRDS("../Scale/rds_objects/11562-JVA/2_myeloid_merged_obj.rds")
+
+# Get the identities of each cell (e.g., clusters or cell types)
+Idents(myeloid_merged_obj) = "Set"
+cell_identities <- Idents(myeloid_merged_obj)
+
+# Initialize a list to store the percentages
+percentage_cells_expressing_kdr <- list()
+
+kdr_expression <- GetAssayData(object = myeloid_merged_obj, slot = "data")["KDR", ]
+
+# Loop through each unique identity
+for (identity in unique(cell_identities)) {
+  # Get the cells belonging to the current identity
+  cells_in_identity <- WhichCells(myeloid_merged_obj, idents = identity)
+  
+  # Calculate the number of cells expressing KDR in the current identity
+  num_cells_expressing_kdr <- sum(kdr_expression[cells_in_identity] > 0)
+  
+  # Calculate the total number of cells in the current identity
+  total_cells_in_identity <- length(cells_in_identity)
+  
+  # Calculate the percentage of cells expressing KDR
+  percentage <- (num_cells_expressing_kdr / total_cells_in_identity) * 100
+  
+  # Store the percentage in the list
+  percentage_cells_expressing_kdr[[identity]] <- percentage
+}
+
+# Convert the list to a data frame for easier viewing
+percentage_cells_expressing_kdr_df <- as.data.frame(percentage_cells_expressing_kdr)
+```
+
+```{r}
+cluster_of_interest = subset(myeloid_merged_obj, subset = seurat_clusters == 9)
+cluster_of_interest = RunPCA(cluster_of_interest)
+cluster_of_interest = RunUMAP(cluster_of_interest, dims = 1:10)
+cluster_of_interest = FindNeighbors(cluster_of_interest)
+cluster_of_interest = FindClusters(cluster_of_interest, resolution = 0.2)
+saveRDS(cluster_of_interest, "rds_objects/epcs/cluster_of_interest.rds")
+
+DimPlot(cluster_of_interest, group.by = "seurat_clusters")
+FeaturePlot(cluster_of_interest, features = c("CD34", "KDR", "PECAM1", "PROM1"))
+
+epcs = subset(cluster_of_interest, subset = seurat_clusters == 0)
+saveRDS(epcs, "rds_objects/epcs/epcs.rds")
+
+(epc_features = FeaturePlot(epcs, features = c("CD34", "KDR", "PECAM1", "PROM1"), cols = c("lightgrey", "#466F9DFF")))
+save_plot(epc_features, "figures/umaps/epc_features", png = TRUE, height = 6, width = 7)
+
+```
+
+```{r}
+myeloid_merged_obj = readRDS("../Scale/rds_objects/11562-JVA/2_myeloid_merged_obj.rds")
+epcs = readRDS("rds_objects/epcs/epcs.rds")
+
+# Label EPCs
+epc_cells = colnames(epcs)
+myeloid_merged_cells = colnames(myeloid_merged_obj)
+myeloid_merged_obj@meta.data[epc_cells, "cell_type"] = "Endothelial progenitor cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "ERP"] = "Erythroid progenitor cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "GMP"] = "Granulocyte-monocyte progenitor cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "HSC"] = "Hematopoietic stem and progenitor cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "LMPP"] = "Lympho-myeloid primed progenitor cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "MEP"] = "Megakaryocyte-erythroid progenitor cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "MPP"] = "Multipotent progenitor cells"
+
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "dendritic"] = "Dendritic cells"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "monocyte"] = "Monocytes"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "neutrophil"] = "Neutrophils"
+myeloid_merged_obj$cell_type[myeloid_merged_obj$cell_type == "platelet"] = "Platelets"
+
+epc_proportion_data = myeloid_merged_obj@meta.data %>% 
+  filter(Set %in% c("MPP-AAVS", "MPP-TET2"))
+epc_proportion_data$CRISPR_target[epc_proportion_data$CRISPR_target == "AAVS"] = "Control"
+
+colors = c("#FEB5A2FF", "#466F9DFF", "#9D7660FF",  "#7B5A56FF",  "#D7B5A6FF",  "#B88A72FF", "#C4A494FF", "#C8133BFF", "#D08A8AFF", "#A3B18AFF", "#A37A93FF")
+
+(epc_proportion_bar = ggplot(epc_proportion_data, aes(x = CRISPR_target, fill = cell_type)) +
+  geom_bar(position = "fill") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  scale_fill_manual(values = colors) +
+  ylab("Proportion") +
+  xlab("") +
+  guides(fill = guide_legend("")))
+save_plot(epc_proportion_bar, "figures/bars/epc_proportion_bar", width = 4.5, height = 3, svg = TRUE)
+```
+
+
+```{r}
+epc_proportion_data$epc_status = ifelse(epc_proportion_data$cell_type == "Endothelial progenitor cells", "EPCs", "Other")
+(epc_proportion_bar_limited = ggplot(epc_proportion_data, aes(x = CRISPR_target, fill = epc_status)) +
+  geom_bar(position = "fill") +#, color = "black", size = 0.2) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  scale_fill_manual(values = c("#466F9DFF", "lightgrey")) +
+  ylab("Proportion") +
+  xlab("") +
+  guides(fill = guide_legend("")))
+save_plot(epc_proportion_bar_limited, "figures/bars/epc_proportion_bar_limited", width = 2.5, height = 3, svg = TRUE, png = TRUE)
+
+```
+
+
+
+```{r}
+epc_proportion_data_for_table = epc_proportion_data %>%
+  dplyr::select(cell_type, CRISPR_target) %>%
+  dplyr::rename(group = "CRISPR_target") %>%
+  group_by(group, cell_type) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  group_by(group) %>%
+  mutate(total_count = sum(count),
+         proportion = count / total_count) %>%
+  ungroup() %>%
+  select(-total_count)  # Remove the total_count column if not needed
+write_tsv(epc_proportion_data_for_table, "tables/epc/hsc_derived_proportions.tsv")
+```
+
+```{r}
+#devtools::install_github("rpolicastro/scProportionTest")
+library(scProportionTest)
+
+epc_proportion_seu = subset(myeloid_merged_obj, subset = Set %in% c("MPP-AAVS", "MPP-TET2"))
+epc_proportion_seu$CRISPR_target[epc_proportion_seu$CRISPR_target == "AAVS"] = "Control"
+prop_test = sc_utils(epc_proportion_seu)
+
+prop_test_tet2 = permutation_test(
+  prop_test, cluster_identity = "cell_type",
+  sample_1 = "Control", sample_2 = "TET2",
+  sample_identity = "CRISPR_target")
+permutation_plot(prop_test_tet2)
+
+write_tsv(prop_test_tet2@results %>% as.data.frame(), "tables/epc/hsc_derived_proportions_significance.tsv")
+
+```
+
+# Pre-geneformer umap.
+```{r}
+library(harmony)
+
+diet_seurat_trimmed = readRDS("../Single_Cell_CHIP/rds_objects/diet_seurat_trimmed.rds")
+
+veh_cd14_monos_tet2_control = subset(diet_seurat_trimmed, subset = cell_type == "CD14 Monos" & GROUP %in% c("TET2 VEH", "none VEH"))
+veh_cd14_monos_tet2_control_umap = veh_cd14_monos_tet2_control %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA() %>%
+  RunUMAP(dims = 1:10) %>%
+  RunHarmony(group.by.vars = "ProjectID", nclust = 1)
+
+veh_cd14_monos_tet2_control_umap$GROUP[veh_cd14_monos_tet2_control_umap$GROUP == "TET2 VEH"] = "TET2"
+veh_cd14_monos_tet2_control_umap$GROUP[veh_cd14_monos_tet2_control_umap$GROUP == "none VEH"] = "Control"
+veh_cd14_monos_tet2_control_umap$GROUP = factor(veh_cd14_monos_tet2_control_umap$GROUP, levels = c("TET2", "Control"))
+
+(tet2_cd14_monocytes_rna_umap = DimPlot(veh_cd14_monos_tet2_control_umap, reduction = "harmony", group.by = "GROUP", pt.size = 0.01, cols = c("#3E7274", "grey")) +
+    ggtitle("RNA CD14+ monocyte embeddings") +
+    theme(axis.ticks = element_blank(), axis.text = element_blank()) +
+    xlab("UMAP 1") +
+    ylab("UMAP 2"))
+
+save_plot(tet2_cd14_monocytes_rna_umap, "figures/umaps/cd14_monos_rna", png = TRUE)
+```
+

@@ -1,0 +1,159 @@
+---
+title: "compare_epc_to_published"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
+
+library(Seurat)
+library(tidyverse)
+library(SingleCellExperiment)
+library(scuttle)
+library(biomaRt)
+
+save_plot = function(plot, file, legend = TRUE, width = 5, height = 4, png = FALSE) {
+  if (png) { ggsave(plot = plot, filename =  paste0(file, ".png"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  ggsave(plot = plot, filename =  paste0(file, ".pdf"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in')
+}
+```
+
+# Collect reference data.
+```{r}
+system("gunzip 'input_data/published_epcs/GSE197907_norm_counts_TPM_GRCh38.p13_NCBI.tsv.gz'")
+system("gunzip 'input_data/published_epcs/GSE197907_raw_counts_GRCh38.p13_NCBI.tsv.gz'")
+
+# GTEx data here: https://www.gtexportal.org/home/downloads/adult-gtex/bulk_tissue_expression 
+# Maybe want single cell group so single-cell?
+```
+
+
+# Load Tabula Sapiens data.
+```{r}
+adipose = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_adipose_tissue_symbols.rds")
+bone_marrow = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_bone_marrow_symbols.rds")
+kidney = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_kidney_symbols.rds")
+liver = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_liver_symbols.rds")
+lung = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_lung_symbols.rds")
+lymph_node = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_lymph_node_symbols.rds")
+skin = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_skin_symbols.rds")
+spleen = readRDS("../10x_Flex/input_data/tabula_sapiens/tabula_spleen_symbols.rds")
+
+```
+
+
+```{r}
+suspected_epcs = readRDS("rds_objects/epcs/epcs.rds")
+DefaultAssay(suspected_epcs) = "RNA"
+suspected_epcs[["SCT"]] = NULL
+suspected_epcs$cell_type = "HSC-differentiated EPC"
+suspected_epcs$label = "HSC-differentiated EPC"
+```
+
+```{r}
+set.seed(1234)
+NUM_TO_SAMPLE = 1233
+prep_for_clustering = function(tissue_data, cell_type_of_interest, label) {
+  cell_type_data = subset(tissue_data, subset = cell_type == cell_type_of_interest)
+  cell_type_data = subset(cell_type_data, cells = sample(Cells(cell_type_data), NUM_TO_SAMPLE))
+  cell_type_data$label = label
+  return(cell_type_data)
+}
+
+adipose_msc = prep_for_clustering(adipose, "mesenchymal stem cell", "adipose: mesenchymal stem cell")
+bone_marrow_monocyte = prep_for_clustering(bone_marrow, "monocyte", "bone marrow: monocyte")
+kidney_epithelial = prep_for_clustering(kidney, "kidney epithelial cell", "kidney: epithelial cell")
+liver_hepatocyte = prep_for_clustering(liver, "hepatocyte", "liver: hepatocyte")
+lung_basal_cell = prep_for_clustering(lung, "basal cell", "lung: basal cell")
+lymph_node_b_cell = prep_for_clustering(lymph_node, "naive B cell", "lymph node: B cell")
+skin_endothelial = prep_for_clustering(skin, "endothelial cell", "skin: endothelial cell")
+spleen_nk = prep_for_clustering(spleen, "mature NK T cell", "spleen: NK cell")
+
+```
+
+```{r}
+single_cell_for_bulking = merge(suspected_epcs, c(adipose_msc, bone_marrow_monocyte, kidney_epithelial, liver_hepatocyte, lung_basal_cell, lymph_node_b_cell, skin_endothelial, spleen_nk))
+```
+
+```{r}
+sce = SingleCellExperiment(single_cell_for_bulking@assays$RNA@counts, colData = single_cell_for_bulking@meta.data)
+assayNames(sce) = "counts"
+agg_data = aggregateAcrossCells(sce, ids = colData(sce)[,c("label")])
+agg_sce = logNormCounts(agg_data)
+agg_seu = as.Seurat(agg_sce)
+```
+
+```{r}
+collapsed_counts = agg_seu@assays$originalexp@counts %>% as.data.frame()
+```
+
+
+# Load published EPC data.
+```{r}
+epc_raw = read_tsv("input_data/published_epcs/GSE197907_raw_counts_GRCh38.p13_NCBI.tsv")
+```
+
+```{r}
+epc_ids = epc_raw$GeneID
+
+ensembl = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+gene_info = getBM(attributes = c("entrezgene_id", "hgnc_symbol"),
+                   filters = "entrezgene_id",
+                   values = epc_ids,
+                   mart = ensembl)
+epc_raw = left_join(epc_raw, gene_info, by = c(GeneID = "entrezgene_id"))
+epc_clean = epc_raw %>%
+  filter(!is.na(hgnc_symbol))
+```
+
+```{r}
+collapsed_counts = collapsed_counts %>%
+  rownames_to_column("hgnc_symbol")
+
+epc_and_comparison = inner_join(epc_clean, collapsed_counts) %>%
+  dplyr::select(-GeneID)
+epc_and_comparison$hgnc_symbol = make.unique(epc_and_comparison$hgnc_symbol)
+epc_and_comparison = epc_and_comparison %>%
+  column_to_rownames("hgnc_symbol")
+```
+
+```{r}
+library(pheatmap)
+gene_expression_scaled = t(scale(t(epc_and_comparison)))
+
+# Calculate the variance for each feature
+variances = apply(gene_expression_scaled, 1, var)
+
+# Sort the features by variance
+sorted_variances = sort(variances, decreasing = TRUE)
+
+# Select the top 20 variable features
+top_20_features = names(sorted_variances)[1:20]
+
+# Subset the data frame to include only the top 20 variable features
+top_20_df = gene_expression_scaled[top_20_features, ]
+colnames(top_20_df)[c(1:12)] = paste("EPC", c(1:12))
+
+phtmap = pheatmap(top_20_df, 
+         clustering_distance_rows = "euclidean", 
+         clustering_distance_cols = "euclidean", 
+         clustering_method = "complete", 
+         show_rownames = FALSE, 
+         show_colnames = TRUE)
+
+```
+
+```{r}
+svg("figures/dendrograms/epc_dendrogram.svg", height = 6, width = 6)
+par(mar = c(5, 4, 4, 18) + 0.1) # Increase the right margin
+(dendrogram = phtmap[[2]] %>%
+ as.dendrogram() %>%
+ plot(horiz=TRUE))
+dev.off()
+```
+
+
+```{r}
+write_tsv(top_20_df %>% as.data.frame() %>% rownames_to_column("gene"), "tables/epc/compare_to_published_epcs.tsv")
+```
+

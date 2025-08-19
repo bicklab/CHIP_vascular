@@ -1,0 +1,91 @@
+---
+title: "promoter_methylation"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
+library(tidyverse)
+library(bsseq)
+```
+
+# https://www.bioconductor.org/packages/devel/bioc/vignettes/bsseq/inst/doc/bsseq_analysis.html
+
+```{r}
+bsseq_chive = readRDS("../DNA_Methylation/output_data/bsseq_chive.rds")
+```
+
+```{r}
+chive_data = read_csv("../DNA_Methylation/tables/chive_all_data.csv")
+chive_cell_proportions = read_tsv("../DNA_Methylation/tables/df_combined.tsv")
+
+chive_all = inner_join(chive_data, chive_cell_proportions, by = c(Patient_ID = "Patient ID", Sample_ID = "Sample ID")) %>%
+  filter(is.na(`Mutation-2`)) %>%
+  filter(`Mutation-1` %in% c("TET2", "DNMT3A", NA)) %>%
+  dplyr::select("VANTAGE ID", "Mutation-1") %>%
+  dplyr::rename(CHIP = "Mutation-1")
+
+chive_all$CHIP[is.na(chive_all$CHIP)] = "Control"
+chive_all$bsseq_names = paste0("input_data/", chive_all$`VANTAGE ID`, ".CX_report.txt.gz")
+
+tet2_bsseq_names = chive_all %>%
+  filter(CHIP == "TET2") %>%
+  pull(bsseq_names)
+dnmt3a_bsseq_names = chive_all %>%
+  filter(CHIP == "DNMT3A") %>%
+  pull(bsseq_names)
+control_bsseq_names = chive_all %>%
+  filter(CHIP == "Control") %>%
+  pull(bsseq_names)
+```
+
+
+```{r}
+smoothed_chive = BSmooth(bsseq_chive)
+smoothed_chive = updateObject(smoothed_chive)
+coverage = getCoverage(smoothed_chive)
+loci_to_keep = which(rowSums(coverage[,c(1:45)]) >= 2 & rowSums(coverage[,c(46:91)]) >= 2)
+length(loci_to_keep)
+
+chr_info = smoothed_chive@rowRanges@seqnames
+data.frame(chr_info@values,chr_info@lengths)
+
+loci_to_keep = which(rowSums(coverage[,c(1:45)] >= 2) >= 2 & rowSums(coverage[,c(46:91)] >= 2) >= 2)
+smoothed_chive_subset = smoothed_chive[loci_to_keep,]
+
+table(seqnames(smoothed_chive_subset))
+#chromosomes_to_keep = setdiff(seqlevels(smoothed_chive_subset), c("chr14", "chr21", "chr4", "chr12", "chr15", "chr18", "chr20", "chrX", "chrY"))
+
+chromosomes_to_keep = c("chr17", "chr19", "chr16", "chr7", "chr1", "chr6", "chr9", "chr11")
+smoothed_chive_subset = keepSeqlevels(smoothed_chive_subset, chromosomes_to_keep, pruning.mode = "coarse")
+
+
+chive_stats = BSmooth.tstat(smoothed_chive_subset, 
+                            group1 = dnmt3a_bsseq_names,
+                            group2 = control_bsseq_names, 
+                            estimate.var = "same",
+                            local.correct = TRUE,
+                            verbose = TRUE)
+
+
+plot(chive_stats)
+```
+```{r}
+(dmrs0 = dmrFinder(chive_stats, cutoff = c(-0.5, 0.5)))
+
+```
+
+```{r}
+(dmrs = subset(dmrs0, n >= 3 & abs(meanDiff) >= 0.1))
+```
+
+# Try methylKit: https://pmc.ncbi.nlm.nih.gov/articles/PMC8345583/#:~:text=The%20differential%20methylation%20analysis%20of,with%20a%20specific%20segmentation%20method.
+# https://bioconductor.org/packages/release/bioc/vignettes/methylKit/inst/doc/methylKit.html
+```{r}
+library(methylKit)
+```
+
+```{r}
+getMethylationStats(bsseq_chive)
+```
+

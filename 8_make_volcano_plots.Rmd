@@ -1,0 +1,259 @@
+---
+title: "make_volcano_plots"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(scuttle)
+library(DESeq2)
+library(RColorBrewer)
+library(ggrepel)
+library(readxl)
+library(decoupleR)
+
+```
+
+# Function for saving figures.
+```{r}
+save_plot = function(plot, file, legend = TRUE, width = 4, height = 4, png = FALSE) {
+  if (png) { ggsave(plot = plot, filename =  paste0(file, ".png"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  ggsave(plot = plot, filename =  paste0(file, ".pdf"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in')
+}
+
+```
+
+# Prep for color labels.
+```{r}
+# list from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7916592/
+tem_genes = c("CCL20", "CDC42", "CTNNB1", "EZR", "ITGB2", "ICAM1", "LSP1", "MADCAM1", "MLCK", "PANX1", "RAC1B", "RHOA", "RHOG", "SRC", "SRF", "VASP", "VCAM1", "VEGF", "VWF", "CX43", "ESAM", "IQGAP2", "JAMA", "JAMB", "JAMC", "JAML", "LCK", "MMP2", "OCLN", "PECAM1", "TIAM1", "TIMP4", "CDH5", "ZO1", "ZO2", "ZO3", "CAV1", "CAV2", "CAVIN1", "PLVAP", "SNAP23", "SNAP25", "VAMP1", "VAMP2", "VAMP3", "VAMP8")
+hla_genes = c("HLA-A", "HLA-B", "HLA-C", "HLA-E")
+
+```
+
+
+
+```{r}
+net = get_collectri(organism = 'human', split_complexes = FALSE)
+
+get_pos_targeted = function(tf) {
+  targeted_genes = net %>%
+    filter(source == tf) %>%
+    filter(mor == 1) %>%
+    pull(target) %>%
+    unique()
+  return(targeted_genes)
+}
+
+fosl2_genes = get_pos_targeted("FOSL2")
+nfatc3_genes = get_pos_targeted("NFATC3")
+xbp1_targeted = get_pos_targeted("XBP1")
+```
+
+
+```{r}
+tet2_mono_data = read_tsv("tables/metacells_de/tet2_classical_monocytes.tsv") 
+tet2_mono_data$is_gata1_target = ifelse(tet2_mono_data$gene %in% gata1_targeted_genes, TRUE, FALSE)
+tet2_mono_data$is_sp1_target = ifelse(tet2_mono_data$gene %in% sp1_targeted_genes, TRUE, FALSE)
+tet2_mono_data$is_myc_target = ifelse(tet2_mono_data$gene %in% myc_targeted_genes, TRUE, FALSE)
+
+tet2_mono_data$regulation = ifelse(tet2_mono_data$log2FoldChange > 0.25 & tet2_mono_data$padj < 0.05, "Up", ifelse(tet2_mono_data$log2FoldChange < -0.25 & tet2_mono_data$padj < 0.05, "Down", "Not significant"))
+
+ggplot(tet2_mono_data, aes(is_gata1_target, fill = regulation)) +
+  geom_bar(position = "fill") +
+  theme_bw()
+ggplot(tet2_mono_data, aes(is_sp1_target, fill = regulation)) +
+  geom_bar(position = "fill") +
+  theme_bw()
+ggplot(tet2_mono_data, aes(is_myc_target, fill = regulation)) +
+  geom_bar(position = "fill") +
+  theme_bw()
+
+
+dnmt3a_mono_data = read_tsv("tables/metacells_de/dnmt3a_classical_monocytes.tsv") 
+dnmt3a_mono_data$is_gata1_target = ifelse(dnmt3a_mono_data$gene %in% gata1_targeted_genes, TRUE, FALSE)
+dnmt3a_mono_data$is_sp1_target = ifelse(dnmt3a_mono_data$gene %in% sp1_targeted_genes, TRUE, FALSE)
+dnmt3a_mono_data$is_myc_target = ifelse(dnmt3a_mono_data$gene %in% myc_targeted_genes, TRUE, FALSE)
+
+dnmt3a_mono_data$regulation = ifelse(dnmt3a_mono_data$log2FoldChange > 0.25 & dnmt3a_mono_data$padj < 0.05, "Up", ifelse(dnmt3a_mono_data$log2FoldChange < -0.25 & dnmt3a_mono_data$padj < 0.05, "Down", "Not significant"))
+
+ggplot(dnmt3a_mono_data, aes(is_gata1_target, fill = regulation)) +
+  geom_bar(position = "fill") +
+  theme_bw()
+ggplot(dnmt3a_mono_data, aes(is_sp1_target, fill = regulation)) +
+  geom_bar(position = "fill") +
+  theme_bw()
+ggplot(dnmt3a_mono_data, aes(is_myc_target, fill = regulation)) +
+  geom_bar(position = "fill") +
+  theme_bw()
+
+```
+```{r}
+differentiation_tfs = c("GATA1", "MYC", "SP1", "NFE2", "HDAC1", "TAF1", "MYB", "TBP", "LMO2", "TAL1", "MED1", "KMT2D", "GATA2", "JUN", "IRF1", "IRF8", "CEBPA", "ETV6")
+
+tet2_mono_data = read_tsv("tables/metacells_de/tet2_classical_monocytes.tsv") 
+dnmt3a_mono_data = read_tsv("tables/metacells_de/dnmt3a_classical_monocytes.tsv") 
+
+for (gene in differentiation_tfs) {
+  pos_targeted_genes = net %>%
+    filter(source == gene & mor == 1) %>%
+    pull(target) %>%
+    unique()
+  neg_targeted_genes = net %>%
+    filter(source == gene & mor == -1) %>%
+    pull(target) %>%
+    unique()
+  
+  tet2_mono_data$target = ifelse(tet2_mono_data$gene %in% pos_targeted_genes, "Positively regulated", ifelse(tet2_mono_data$gene %in% neg_targeted_genes, "Negatively regulated", "Not regulated"))
+  dnmt3a_mono_data$target = ifelse(dnmt3a_mono_data$gene %in% pos_targeted_genes, "Positively regulated", ifelse(dnmt3a_mono_data$gene %in% neg_targeted_genes, "Negatively regulated", "Not regulated"))
+  
+  tet2_mono_data$regulation = ifelse(tet2_mono_data$log2FoldChange > 0.25 & tet2_mono_data$padj < 0.05, "Up", ifelse(tet2_mono_data$log2FoldChange < -0.25 & tet2_mono_data$padj < 0.05, "Down", "Not significant"))
+  dnmt3a_mono_data$regulation = ifelse(dnmt3a_mono_data$log2FoldChange > 0.25 & dnmt3a_mono_data$padj < 0.05, "Up", ifelse(dnmt3a_mono_data$log2FoldChange < -0.25 & dnmt3a_mono_data$padj < 0.05, "Down", "Not significant"))
+  
+  print(ggplot(tet2_mono_data, aes(target, fill = regulation)) +
+    geom_bar(position = "fill") +
+    theme_bw() +
+    ggtitle(paste("TET2", gene)))
+  
+  print(ggplot(dnmt3a_mono_data, aes(target, fill = regulation)) +
+    geom_bar(position = "fill") +
+    theme_bw() +
+    ggtitle(paste("DNMT3A", gene)))
+  
+}
+```
+
+
+# Plot volcanos.
+```{r}
+
+myeloid_up_genes = read_tsv("input_data/myeloid_differentiation_up.tsv", skip = 2, col_names = "gene")
+myeloid_down_genes = read_tsv("input_data/myeloid_differentiation_down.tsv", skip = 2, col_names = "gene")
+
+format_volcano = list(
+  xlab("decreased in CHIP     log2(fold change)     increased in CHIP"),
+  ylab("-log10(p-value)"),
+  guides(color = guide_legend("Function")),
+  theme_bw(),
+  theme_classic(),
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(size = 12.5),
+        title = element_text(size = 11),
+        legend.key.size = unit(0, "lines")),
+  scale_color_manual(values = c("#C8133BFF", "#EA8783FF", "darkgrey"))
+
+)
+
+
+# function for adding labels
+gene_labels = function(data, direction, xlim, ylim, few = FALSE) {
+  sorted_data = data %>% 
+    arrange(desc(`-log10_p_val`)) %>%
+    filter(`-log10_p_val` > -log10(0.05)) %>%
+    filter(abs(log2FoldChange) > 0.25) %>%
+    head(10)
+  if (few) {
+    sorted_data = head(sorted_data, 3)
+  }
+  if (direction == "pos") {
+    xlims = c(xlim - xlim/3, xlim + xlim/3)
+  } else {
+    xlims = c(-xlim - xlim/3, -xlim + xlim/3)
+  }
+  labels = geom_label_repel(data = sorted_data, mapping = aes(label = gene), size = 3, fill = NA, direction = "y", max.overlaps =  Inf, nudge_x = 0.05, segment.alpha = 0.25, force_pull = 0, xlim = xlims, ylim = c(ylim / 5, ylim), show.legend = FALSE, box.padding = 0, segment.linetype = "solid", label.size = 0.08, segment.curvature = ifelse(direction == "neg", -1e-40, 1e-40))
+  return(list(labels))
+}
+
+# function for making plot
+make_volcano_plots = function(cell_type, comparison, x_limit = 1.5, few = FALSE, rds = FALSE, title = "", standard_y_limit = NA) {
+
+  folder = "tables/metacells_de/"
+  filename = paste0(comparison, "_", cell_type, ".tsv")
+  path_to_file = paste0(folder, filename)
+  
+  data = read_tsv(paste0(path_to_file)) %>%
+    mutate(`-log10_p_val` = -log10(padj))
+  
+  # sometimes the most significant p-value is 0, which results in an infinite value after log transformation
+  # if that is the case, these lines convert the value to the highest possible value
+  if (any(data$`-log10_p_val` == Inf)) {
+    data$`-log10_p_val`[data$`-log10_p_val` == Inf] = 292
+  } 
+  
+  y_limit = max(data$`-log10_p_val`) * 1.1
+  
+  data$label_group = "Other"
+  data$label_group[data$gene %in% myeloid_up_genes$gene] = "Myeloid up genes"
+  data$label_group[data$gene %in% myeloid_down_genes$gene] = "Myeloid down genes"
+  data$label_group = factor(data$label_group, levels = c("Myeloid up genes", "Myeloid down genes", "Other"))
+
+  data_pos = data %>% filter(log2FoldChange > 0)
+  data_neg = data %>% filter(log2FoldChange < 0)
+  buffer = 5
+  
+  highlight_list = c(myeloid_up_genes$gene, myeloid_down_genes$gene)
+
+  data_pos = data_pos %>% filter(gene %in% c(highlight_list)) #, head(data_pos, 7) %>% pull(gene)))
+  data_neg = data_neg %>% filter(gene %in% c(highlight_list)) #, head(data_neg, 7) %>% pull(gene)))
+  
+  title = ifelse(title == "", gsub("_", " ", gsub(".tsv", "", path_to_file)), title)
+  
+  # render plot
+  plot = ggplot(data %>% arrange(gene %in% highlight_list), aes(x = log2FoldChange, y = `-log10_p_val`, color = label_group)) +
+      geom_point() +
+      format_volcano +
+      xlim(-x_limit, x_limit) +
+      ylim(0, ifelse(!is.na(standard_y_limit), standard_y_limit, y_limit)) +
+      geom_vline(xintercept = c(-0.25, 0.25), linetype = "longdash", alpha = 0.5) +
+      geom_hline(yintercept = -log10(0.05), linetype = "longdash", alpha = 0.5) +
+      gene_labels(data = data_pos, direction = "pos", xlim = x_limit, ylim = y_limit, few) +
+      gene_labels(data = data_neg, direction = "neg", xlim = x_limit, ylim = y_limit, few) +
+      ggtitle(title)
+  
+  print(plot)
+  
+  output_filename = paste0("figures/volcanos/", gsub(".tsv", "", gsub("\\+", "", filename)))
+  save_plot(plot, output_filename, height = 4, width = 6.5, png = TRUE)
+}
+```
+
+
+
+
+# Make volcano plots.
+```{r}
+make_volcano_plots("naive_cd4+_t_cells", "tet2", title = "TET2 Naive CD4+ T Cells", x_limit = 2)
+make_volcano_plots("naive_cd4+_t_cells", "dnmt3a", title = "DNMT3A CD4+ T Cells", x_limit = 2)
+make_volcano_plots("cd8+_nkt-like_cells", "tet2", title = "TET2 CD8+ NKT-like Cells", x_limit = 3)
+make_volcano_plots("cd8+_nkt-like_cells", "dnmt3a", title = "DNMT3A CD8+ NKT-like Cells", x_limit = 3)
+make_volcano_plots("platelets", "tet2", title = "TET2 Megakaryocytes/Platelets", x_limit = 5)
+make_volcano_plots("platelets", "dnmt3a", title = "DNMT3A Megakaryocytes/Platelets", x_limit = 5)
+make_volcano_plots("naive_b_cells", "tet2", title = "TET2 Naive B Cells", x_limit = 3)
+make_volcano_plots("naive_b_cells", "dnmt3a", title = "DNMT3A Naive B Cells", x_limit = 3)
+make_volcano_plots("classical_monocytes", "tet2", title = "TET2 Classical Monocytes", x_limit = 5)
+make_volcano_plots("classical_monocytes", "dnmt3a", title = "DNMT3A Classical Monocytes", x_limit = 5)
+make_volcano_plots("non-classical_monocytes", "tet2", title = "TET2 Non-classical Monocytes", x_limit = 8)
+make_volcano_plots("non-classical_monocytes", "dnmt3a", title = "DNMT3A Non-classical Monocytes", x_limit = 8)
+make_volcano_plots("myeloid_dendritic_cells", "tet2", title = "TET2 Myeloid Dendritic Cells", x_limit = 7)
+make_volcano_plots("myeloid_dendritic_cells", "dnmt3a", title = "DNMT3A Myeloid Dendritic Cells", x_limit = 7)
+```
+
+```{r}
+make_volcano_plots("stromal", "tet2", title = "TET2 Adipose Tissue Stromal Cells", x_limit = 2)
+make_volcano_plots("stromal", "dnmt3a", title = "DNMT3A Adipose Tissue Stromal Cells", x_limit = 2)
+make_volcano_plots("endothelial", "tet2", title = "TET2 Adipose Tissue Endothelial Cells", x_limit = 2)
+make_volcano_plots("endothelial", "dnmt3a", title = "DNMT3A Adipose Tissue Endothelial Cells", x_limit = 2)
+make_volcano_plots("vascular_smooth_muscle", "tet2", title = "TET2 Adipose Tissue Vascular Smooth Muscle Cells", x_limit = 2)
+make_volcano_plots("vascular_smooth_muscle", "dnmt3a", title = "DNMT3A Adipose Tissue Vascular Smooth Muscle Cells", x_limit = 2)
+# make_volcano_plots("b_cells", "tet2", title = "TET2 Adipose Tissue B Cells", x_limit = 2)
+# make_volcano_plots("b_cells", "dnmt3a", title = "DNMT3A Adipose Tissue B Cells", x_limit = 2)
+make_volcano_plots("myeloid", "tet2", title = "TET2 Adipose Tissue Myeloid Cells", x_limit = 2)
+make_volcano_plots("myeloid", "dnmt3a", title = "DNMT3A Adipose Tissue Myeloid Cells", x_limit = 2)
+make_volcano_plots("t_and_nk_cells", "tet2", title = "TET2 Adipose Tissue T and NK Cells", x_limit = 6)
+make_volcano_plots("t_and_nk_cells", "dnmt3a", title = "DNMT3A Adipose Tissue T and NK Cells", x_limit = 6)
+
+```

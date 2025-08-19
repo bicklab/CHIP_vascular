@@ -1,0 +1,51 @@
+---
+title: "add_metadata_and_integrate"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular")
+library(Seurat)
+library(readxl)
+library(tidyverse)
+```
+
+# Processed individual lanes were merged using the merge function. The gene counts were normalized for each cell by dividing by the total gene counts and multiplying by a factor of 10,000 before applying log-transformation as implemented by the LogNormalize function. Protein expression counts were normalized using the CLR method. Variable genes were identified using the FindVariableFeatures function (nFeatures = 3000), and the data were scaled and centered using the ScaleData function. Principal component analysis (PCA) was performed on the scaled data. The number of principal components (PCs) used for downstream analysis was selected based on elbow plots and heat maps of PC dimensions as implemented in the DimHeatmap function. To reduce the batch effect associated with running multiple 10X lanes, we used the Harmony algorithm on the uncorrected PCs implemented as a Seurat wrapper to integrate across lanes26. We performed clustering on the Harmony-corrected PCs using FindNeighbors and FindClusters functions. Marker genes for each cluster were determined using the Wilcoxon Rank Sum test implemented in FindAllMarkers.
+
+# Load data.
+```{r}
+adipose = readRDS("input_data/HIVnegative_CHIP.rds")
+
+DimPlot(adipose, group.by = "CellType")
+```
+
+# Remove mito and ribo genes.
+```{r}
+filter_genes = function(seu) {
+  ribo = rownames(seu)[grepl("^RPS|^RPL", rownames(seu))]
+  mito = rownames(seu)[grepl("^MT-|MRP", rownames(seu))]
+
+  all_remove = c(ribo, mito)
+  seu = subset(seu, features = setdiff(rownames(seu), all_remove))
+
+  return(seu)
+}
+
+adipose = filter_genes(adipose)
+```
+
+
+# Add metadata for adipose data.
+```{r}
+hatim_metadata = readxl::read_excel("input_data/HATIM_metadata_HIVnegative.xlsx")
+adipose@meta.data = inner_join(adipose@meta.data %>% rownames_to_column(), hatim_metadata %>% mutate(HATIMID = as.character(HATIMID))) %>%
+  column_to_rownames()
+adipose$cell_type = adipose$CellType
+adipose$CellType = NULL
+
+saveRDS(adipose, "rds_objects/5_annotated_adipose.rds")
+```
+
+
+
+
