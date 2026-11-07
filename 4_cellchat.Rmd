@@ -37,14 +37,20 @@ seu_adipose_annotated$cell_type = gsub("\\/", " and ", seu_adipose_annotated$cel
 ```
 
 
-
-
-# Merge.
+# Merge monocytes and endothelial cells.
 ```{r}
 endothelial = subset(seu_adipose_annotated, subset = (cell_type == "Endothelial"))
 cd14_monos = subset(seu_pbmcs_annotated, subset = (cell_type == "Classical Monocytes"))
 
 mono_endo = merge(endothelial, cd14_monos)
+```
+
+# Merge T cells and endothelial cells.
+```{r}
+endothelial = subset(seu_adipose_annotated, subset = (cell_type == "Endothelial"))
+t_cells = subset(seu_pbmcs_annotated, subset = (cell_type %in% c("CD8+ NKT-like cells", "Naive CD4+ T cells")))
+
+t_endo = merge(endothelial, t_cells)
 ```
 
 
@@ -91,6 +97,19 @@ create_cc(merged_control, "rds_objects/cellchat/adipose_pbmc_control_cc.rds")
 
 ```
 
+# Create T cell cellchat object.
+```{r}
+t_endo_merged.list = SplitObject(t_endo, split.by = "CHIP")
+
+t_endo_merged_tet2 = t_endo_merged.list$TET2
+t_endo_merged_dnmt3a = t_endo_merged.list$DNMT3A
+t_endo_merged_control = t_endo_merged.list$Control
+
+create_cc(t_endo_merged_tet2, "rds_objects/cellchat/t_endo_tet2_cc.rds")
+create_cc(t_endo_merged_dnmt3a, "rds_objects/cellchat/t_endo_dnmt3a_cc.rds")
+create_cc(t_endo_merged_control, "rds_objects/cellchat/t_endo_control_cc.rds")
+```
+
 # Load objects.
 ```{r}
 adipose_pbmc_tet2_cc = readRDS("rds_objects/cellchat/adipose_pbmc_tet2_cc.rds")
@@ -112,7 +131,7 @@ write_tsv(adipose_pbmc_cc@netP["Control"]$Control$prob %>% as.data.frame() %>% r
 
 ```
 
-
+# Monocyte <--> endothelial cell signaling.
 ```{r}
 
 (mono_endo_grouped_rank = rankNet(adipose_pbmc_cc, mode = "comparison", comparison = c(1, 2, 3), sources.use = c("Classical Monocytes", "Endothelial"), targets.use = c("Classical Monocytes", "Endothelial"), signaling = c("CCL", "ICAM", "VCAM", "SELPLG", "CXCL", "SELL", "ITGB2", "PECAM1"), do.stat = TRUE, color.use = c("#3E7274",  "#584482", "grey")) + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
@@ -136,55 +155,47 @@ write_tsv(dnmt3a_grouped_rank$data, "tables/cellchat/dnmt3a_ranknet_results.tsv"
 ```
 
 
-
-# Plot circle plots (complete).
 ```{r}
+ligand_receptors = CellChatDB.human[["interaction"]] %>% filter(pathway_name == "ICAM") %>% select(ligand, receptor) %>% as.vector() %>% unlist() %>% unique()
 
-(complete_circ_plot = netVisual_diffInteraction(adipose_pbmc_cc, comparison = c(1,2), weight.scale = TRUE, measure = "weight",  color.edge = c("grey", "slateblue"))) 
+# Extract normalized expression (can also use "RNA" or "SCT" depending on your assay)
+expr_matrix <- FetchData(mono_endo, vars = ligand_receptors)
 
-(complete_circ_plot = netVisual_diffInteraction(adipose_pbmc_cc, comparison = c(1,3), weight.scale = TRUE, measure = "weight",  color.edge = c("grey", "slateblue"))) 
+# Select metadata columns of interest
+metadata_subset <- mono_endo@meta.data[, c("cell_type", "CHIP")]
 
-#pdf("figures/cellchat/complete_circ_plot.pdf", height = 5.5, width = 7)
-#complete_circ_plot
-#dev.off()
+# Combine expression and metadata
+combined_matrix <- cbind(metadata_subset, expr_matrix)
 
+# Identify gene columns
+gene_cols <- setdiff(colnames(combined_matrix), c("cell_type", "CHIP"))
+
+# Group by cell_type and CHIP, then summarize non-zero counts for each gene
+grouped_counts <- combined_matrix %>%
+  summarise(across(all_of(gene_cols), ~sum(.x != 0), .names = "nonzero_{.col}"))
+
+sum(grouped_counts[1, ] < 50) / ncol(grouped_counts)
 ```
 
 
-# CIRCLE PLOT TO DEMONSTRATE TRANENDOTHELIAL MIGRATION PATHWAYS
+
+# Check T cells.
 ```{r}
-library(RColorBrewer)
+t_endo_tet2_cc = readRDS("rds_objects/cellchat/t_endo_tet2_cc.rds")
+t_endo_dnmt3a_cc = readRDS("rds_objects/cellchat/t_endo_dnmt3a_cc.rds")
+t_endo_control_cc = readRDS("rds_objects/cellchat/t_endo_control_cc.rds")
 
-pathways.show = c("CXCL", "IL6", "SELL", "ITGB2", "PECAM1", "JAM") 
-sources = c("Circulating CD14+ monocytes", "Endothelial cells", "Tissue-resident CD4+ T cells", "Circulating CD4+ T cells", "Tissue-resident macrophages", "Tissue-resident CD14+ monocytes", "Tissue-resident CD16+ monocytes", "Tissue-resident CD8+ T cells", "Circulating CD16+ monocytes")
-targets = c("Circulating CD8+ T cells", "Endothelial cells", "Tissue-resident CD4+ T cells", "Circulating CD4+ T cells", "Tissue-resident macrophages", "Tissue-resident CD14+ monocytes", "Tissue-resident CD16+ monocytes", "Tissue-resident CD8+ T cells", "Circulating CD16+ monocytes")
+t_endo_cc.list = list(TET2 = t_endo_tet2_cc, DNMT3A = t_endo_dnmt3a_cc, Control = t_endo_control_cc)
+t_endo_cc = mergeCellChat(t_endo_cc.list, add.names = names(t_endo_cc.list))
+t_endo_cc = updateCellChat(t_endo_cc)
+```
+# Plot T cell signaling
+```{r}
+(t_endo_grouped_rank = rankNet(t_endo_cc, mode = "comparison", comparison = c(1, 2, 3), sources.use = c("CD8+ NKT-like cells", "Endothelial"), targets.use = c("CD8+ NKT-like cells", "Endothelial"), signaling = c("IFN-I", "IFN-II"), do.stat = TRUE, color.use = c("#3E7274",  "#584482", "grey")) + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("CD8+ T cells"))
 
-
-pdf(paste0("figures/cellchat/chip_CXCL_circ_plot.pdf"), height = 4.5, width = 5)
-netVisual_aggregate(merged_chip_cc, signaling = "CXCL", layout = "circle", sources.use = sources, targets.use = targets, remove.isolate = TRUE, top = 0.5, color.use = c(brewer.pal(12, "Paired")[6], rep("grey", times = 3), rep("gray32", times = 6)))
-dev.off()
-
-pdf(paste0("figures/cellchat/chip_SELL_circ_plot.pdf"), height = 4.5, width = 5)
-netVisual_aggregate(merged_chip_cc, signaling = "SELL", layout = "circle", sources.use = sources, targets.use = targets, remove.isolate = TRUE, top = 0.5, color.use = c(brewer.pal(12, "Paired")[6], rep("grey", times = 2), rep("gray32", times = 6)))
-dev.off()
-
-pdf(paste0("figures/cellchat/chip_ITGB2_circ_plot.pdf"), height = 4.5, width = 5)
-netVisual_aggregate(merged_chip_cc, signaling = "ITGB2", layout = "circle", sources.use = sources, targets.use = targets, remove.isolate = TRUE, top = 0.5, color.use = c(brewer.pal(12, "Paired")[6], rep("grey", times = 3), rep("gray32", times = 6)))
-dev.off()
-
-pdf(paste0("figures/cellchat/chip_PESCAM1_circ_plot.pdf"), height = 4.5, width = 5)
-netVisual_aggregate(merged_chip_cc, signaling = "PECAM1", layout = "circle", sources.use = sources, targets.use = targets, remove.isolate = TRUE, top = 0.5, color.use = c(brewer.pal(12, "Paired")[6], rep("grey", times = 1), rep("gray32", times = 6)))
-dev.off()
-  
-  
-for (pathway in pathways.show) {
-  
-  pdf(paste0("figures/cellchat/control_", pathway, "_circ_plot.pdf"), height = 4.5, width = 5)
-
-  netVisual_aggregate(merged_control_cc, signaling = pathway, layout = "circle", sources.use = c("Circulating CD14+ monocytes", "Endothelial cells", "Tissue-resident CD4+ T cells", "Circulating CD4+ T cells", "Tissue-resident macrophages", "Tissue-resident CD14+ monocytes", "Tissue-resident CD16+ monocytes", "Tissue-resident CD8+ T cells", "Circulating CD16+ monocytes"), targets.use = c("Circulating CD8+ T cells", "Endothelial cells", "Tissue-resident CD4+ T cells", "Circulating CD4+ T cells", "Tissue-resident macrophages", "Tissue-resident CD14+ monocytes", "Tissue-resident CD16+ monocytes", "Tissue-resident CD8+ T cells", "Circulating CD16+ monocytes"), remove.isolate = TRUE, top = 0.5, color.use = c(brewer.pal(12, "Paired")[6], rep("grey", times = 3), rep("gray32", times = 6)))
-  
-  dev.off()
-}
+(t_endo_grouped_rank = rankNet(t_endo_cc, mode = "comparison", comparison = c(1, 2, 3), sources.use = c("Naive CD4+ T cells", "Endothelial"), targets.use = c("Naive CD4+ T cells", "Endothelial"), signaling = c("IFN-I", "IFN-II"), do.stat = TRUE, color.use = c("#3E7274",  "#584482", "grey")) + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("CD4+ T cells")) 
 
 ```
 

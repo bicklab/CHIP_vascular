@@ -1,0 +1,129 @@
+---
+title: "subtype_cellchat"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
+library(Seurat)
+library(CellChat)
+library(khroma)
+library(tidyverse)
+```
+
+```{r}
+save_plot = function(plot, file, legend = TRUE, width = 4, height = 4, png = FALSE, svg = FALSE) {
+  if (png) { ggsave(plot = plot, filename =  paste0(file, ".png"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  if (svg) { ggsave(plot = plot, filename =  paste0(file, ".svg"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in') }
+  ggsave(plot = plot, filename =  paste0(file, ".pdf"), dpi = 600, width = ifelse(legend, width, width - 1.5), height = height, units = 'in')
+}
+```
+
+# Prepare PBMC data.
+```{r}
+seu_pbmcs_annotated = readRDS("rds_objects/6_pbmcs_harmonized.rds")
+seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$Patient_ID == "CH-21-006"] = "DNMT3A"
+seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$Patient_ID == "CH-21-014"] = "TET2"
+seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$CHIP == "control"] = "Control"
+
+```
+
+# Prepare adipose data.
+```{r}
+seu_adipose_annotated = readRDS("rds_objects/5_annotated_adipose.rds")
+seu_adipose_annotated$Patient_ID = seu_adipose_annotated$HATIMID
+seu_adipose_annotated$cell_type = gsub("\\/", " and ", seu_adipose_annotated$cell_type)
+
+```
+
+
+# Merge monocytes and endothelial cells.
+```{r}
+endothelial = subset(seu_adipose_annotated, subset = (cell_type == "Endothelial"))
+cd14_monos = subset(seu_pbmcs_annotated, subset = (cell_type == "Classical Monocytes"))
+
+mono_endo = merge(endothelial, cd14_monos)
+mono_endo$cell_subtype = ifelse(!is.na(mono_endo$Annotation), mono_endo$Annotation, mono_endo$cell_type)
+```
+
+
+# Function to create objects.
+```{r}
+create_cc = function(seu_obj, output_path, secreted_only = FALSE) {
+  cellchat = createCellChat(object = seu_obj, meta = seu_obj@meta.data, group.by = "cell_subtype") 
+  CellChatDB = CellChatDB.human
+  
+  if (secreted_only) {
+    CellChatDB.use = subsetDB(CellChatDB, search = "Secreted Signaling")
+  } else {
+    CellChatDB.use = CellChatDB
+  }
+  cellchat@DB = CellChatDB.use
+
+  cellchat = subsetData(cellchat)
+  cellchat = identifyOverExpressedGenes(cellchat)
+  cellchat = identifyOverExpressedInteractions(cellchat) 
+  cellchat = projectData(cellchat, PPI.human) 
+  cellchat = computeCommunProb(cellchat, type = 'truncatedMean') 
+  cellchat = filterCommunication(cellchat, min.cells = 25) 
+  cellchat = computeCommunProbPathway(cellchat) 
+  cellchat = aggregateNet(cellchat)
+  cellchat = netAnalysis_computeCentrality(cellchat, slot.name = "netP")
+
+  saveRDS(cellchat, output_path)
+  return(cellchat)
+}
+
+```
+
+# Merge objects and run cellchat.
+```{r}
+subtypes_merged.list = SplitObject(mono_endo, split.by = "CHIP")
+
+subtypes_merged_tet2 = subtypes_merged.list$TET2
+subtypes_merged_dnmt3a = subtypes_merged.list$DNMT3A
+subtypes_merged_control = subtypes_merged.list$Control
+
+create_cc(subtypes_merged_tet2, "rds_objects/cellchat/subtypes_adipose_pbmc_tet2_cc.rds")
+create_cc(subtypes_merged_dnmt3a, "rds_objects/cellchat/subtypes_adipose_pbmc_dnmt3a_cc.rds")
+create_cc(subtypes_merged_control, "rds_objects/cellchat/subtypes_adipose_pbmc_control_cc.rds")
+
+```
+
+
+# Load objects.
+```{r}
+subtypes_adipose_pbmc_tet2_cc = readRDS("rds_objects/cellchat/subtypes_adipose_pbmc_tet2_cc.rds")
+subtypes_adipose_pbmc_dnmt3a_cc = readRDS("rds_objects/cellchat/subtypes_adipose_pbmc_dnmt3a_cc.rds")
+subtypes_adipose_pbmc_control_cc = readRDS("rds_objects/cellchat/subtypes_adipose_pbmc_control_cc.rds")
+```
+
+# Merge objects.
+```{r}
+subtypes_adipose_pbmc_cc.list = list(TET2 = subtypes_adipose_pbmc_tet2_cc, DNMT3A = subtypes_adipose_pbmc_dnmt3a_cc, Control = subtypes_adipose_pbmc_control_cc)
+subtypes_adipose_pbmc_cc = mergeCellChat(subtypes_adipose_pbmc_cc.list, add.names = names(subtypes_adipose_pbmc_cc.list))
+subtypes_adipose_pbmc_cc = updateCellChat(subtypes_adipose_pbmc_cc)
+```
+
+
+
+# Monocyte <--> endothelial cell signaling.
+```{r}
+
+(subtypes_arterial_mono_endo_grouped_rank = rankNet(subtypes_adipose_pbmc_cc, mode = "comparison", comparison = c(1, 2, 3), sources.use = c("Classical Monocytes", "Arterial EC"), targets.use = c("Classical Monocytes", "Arterial EC"), signaling = c("CCL", "ICAM", "VCAM", "SELPLG", "CXCL", "SELL", "ITGB2", "PECAM1"), do.stat = TRUE, color.use = c("#3E7274",  "#584482", "grey"), title = "Classical Monocytes <--> Arterial EC") + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))) 
+
+(subtypes_capillary_mono_endo_grouped_rank = rankNet(subtypes_adipose_pbmc_cc, mode = "comparison", comparison = c(1, 2, 3), sources.use = c("Classical Monocytes", "Capillary EC"), targets.use = c("Classical Monocytes", "Capillary EC"), signaling = c("CCL", "ICAM", "VCAM", "SELPLG", "CXCL", "SELL", "ITGB2", "PECAM1"), do.stat = TRUE, color.use = c("#3E7274",  "#584482", "grey"), title = "Classical Monocytes <--> Capillary EC") + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))) 
+
+(subtypes_venous_mono_endo_grouped_rank = rankNet(subtypes_adipose_pbmc_cc, mode = "comparison", comparison = c(1, 2, 3), sources.use = c("Classical Monocytes", "Venous EC"), targets.use = c("Classical Monocytes", "Venous EC"), signaling = c("CCL", "ICAM", "VCAM", "SELPLG", "CXCL", "SELL", "ITGB2", "PECAM1"), do.stat = TRUE, color.use = c("#3E7274",  "#584482", "grey"), title = "Classical Monocytes <--> Venous EC") + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))) 
+
+save_plot(subtypes_arterial_mono_endo_grouped_rank, "figures/cellchat/subtypes_arterial_mono_endo_grouped_rank", width = 4, height = 3, png = TRUE)
+save_plot(subtypes_capillary_mono_endo_grouped_rank, "figures/cellchat/subtypes_capillary_mono_endo_grouped_rank", width = 4, height = 3, png = TRUE)
+save_plot(subtypes_venous_mono_endo_grouped_rank, "figures/cellchat/subtypes_venous_mono_endo_grouped_rank", width = 4, height = 3, png = TRUE)
+
+```
+
+
+

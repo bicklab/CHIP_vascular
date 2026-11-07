@@ -8,7 +8,7 @@ knitr::opts_knit$set(root.dir = "~/Alyssa/Single_Cell_CHIP_Vascular/")
 library(Seurat)
 library(CellChat)
 library(khroma)
-
+library(tidyverse)
 ```
 
 ```{r}
@@ -100,17 +100,12 @@ write_tsv(mono_endo_meta, "tables/mono_endo_meta.tsv")
 
 # Load objects.
 ```{r}
+mono_endo_meta = read_tsv("tables/mono_endo_meta.tsv")
 
 chip_cc_obj_paths = paste0("rds_objects/cellchat/patient_level_", mono_endo_meta$CHIP, "_", mono_endo_meta$Patient_ID, "_cc.rds") %>% sort()
 chip_cc_objs = lapply(chip_cc_obj_paths, readRDS)
 
 ```
-
-```{r}
-chip_cc_obj_paths
-names(chip_cc_objs)
-```
-
 
 # Merge objects.
 ```{r}
@@ -124,7 +119,7 @@ patient_level_cc = updateCellChat(patient_level_cc)
 (mono_endo_grouped_rank = rankNet(patient_level_cc, mode = "comparison", comparison = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15), sources.use = c("Classical Monocytes", "Endothelial"), targets.use = c("Classical Monocytes", "Endothelial"), signaling = c("CCL", "ICAM", "VCAM", "SELPLG", "CXCL", "SELL", "ITGB2", "PECAM1"), do.stat = TRUE, color.use = c(rep("grey", times = 9), rep("#584482", times = 4), rep("#3E7274", times = 2))) + aes(x = contribution.scaled, y = name) + ylab("") + xlab("Signaling strength") +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))) 
 
-save_plot(mono_endo_grouped_rank, "figures/cellchat/patient_level_rank_mono_endo_grouped", width = 7, height = 5)
+save_plot(mono_endo_grouped_rank, "figures/cellchat/patient_level_rank_mono_endo_grouped", width = 7, height = 5, png = TRUE)
 
 ```
 
