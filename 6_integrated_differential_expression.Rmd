@@ -21,7 +21,11 @@ library(decoupleR)
 ```{r}
 seu_pbmcs_annotated = readRDS("rds_objects/6_pbmcs_harmonized.rds")
 seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$Patient_ID == "CH-21-006"] = "DNMT3A"
+seu_pbmcs_annotated$VAF[seu_pbmcs_annotated$Patient_ID == "CH-21-006"] = 0.13
+
 seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$Patient_ID == "CH-21-014"] = "TET2"
+seu_pbmcs_annotated$VAF[seu_pbmcs_annotated$Patient_ID == "CH-21-014"] = 0.51
+
 seu_pbmcs_annotated$CHIP[seu_pbmcs_annotated$CHIP == "control"] = "Control"
 
 seu_pbmcs_annotated$sample_cell_type = paste(seu_pbmcs_annotated$CHIP, seu_pbmcs_annotated$Patient_ID, seu_pbmcs_annotated$cell_type, sep = "_")
@@ -261,17 +265,67 @@ for (cell_type in cell_types) {
 ```
 
 ```{r}
-pbmc_metadata = seu_pbmcs_annotated@meta.data %>%
-  dplyr::select(Patient_ID, Age, Sex, BMI, CHIP, VAF) %>%
-  unique()
-write_tsv(pbmc_metadata, "tables/metadata/pbmc_metadata.tsv")
+# Extract unique patient IDs from both objects
+all_patient_ids = unique(c(
+  seu_pbmcs_annotated$Patient_ID,
+  seu_adipose_annotated$Patient_ID
+))
 
-adipose_metadata = seu_adipose_annotated@meta.data %>%
-  dplyr::select(Patient_ID, Age, Sex, BMI, CHIP, VAF) %>%
-  unique()
-write_tsv(adipose_metadata, "tables/metadata/adipose_metadata.tsv")
+# Create mapping
+patient_id_map = setNames(
+  paste0("Patient_", seq_along(all_patient_ids)),
+  all_patient_ids
+)
+
+seu_pbmcs_annotated$Patient_ID_generic = unname(
+  patient_id_map[as.character(seu_pbmcs_annotated$Patient_ID)]
+)
+
+seu_adipose_annotated$Patient_ID_generic = unname(
+  patient_id_map[as.character(seu_adipose_annotated$Patient_ID)]
+)
+
 
 ```
 
 
+```{r}
+patient_metadata = bind_rows(
+  seu_pbmcs_annotated@meta.data %>% select(Patient_ID, CHIP, VAF),
+  seu_adipose_annotated@meta.data %>% select(Patient_ID, CHIP, VAF) %>% mutate(VAF = as.numeric(VAF))
+) %>%
+  distinct() %>%
+  arrange(
+    factor(CHIP, levels = c("TET2", "DNMT3A")),
+    desc(VAF)
+  ) %>%
+  distinct(Patient_ID, .keep_all = TRUE)
 
+# Create generic ID mapping
+patient_id_map = setNames(
+  paste0("Patient_", sprintf("%03d", seq_len(nrow(patient_metadata)))),
+  patient_metadata$Patient_ID
+)
+
+# Apply mapping to both objects
+seu_pbmcs_annotated$Patient_ID_generic <- unname(
+  patient_id_map[as.character(seu_pbmcs_annotated$Patient_ID)]
+)
+
+seu_adipose_annotated$Patient_ID_generic <- unname(
+  patient_id_map[as.character(seu_adipose_annotated$Patient_ID)]
+)
+```
+
+```{r}
+pbmc_metadata = seu_pbmcs_annotated@meta.data %>%
+  dplyr::select(Patient_ID, Patient_ID_generic, Age, Sex, BMI, CHIP, VAF) %>%
+  unique()
+write_tsv(pbmc_metadata, "tables/metadata/pbmc_metadata.tsv")
+
+adipose_metadata = seu_adipose_annotated@meta.data %>%
+  dplyr::select(Patient_ID_generic, Age, Sex, BMI, CHIP, VAF) %>%
+  mutate(VAF = as.numeric(VAF)) %>%
+  unique()
+write_tsv(adipose_metadata, "tables/metadata/adipose_metadata.tsv")
+```
